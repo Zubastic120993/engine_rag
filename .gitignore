@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+venv/
+rag_env/
+engine_db/
+.env
+.DS_Store
+.idea/
+__MACOSX/
+

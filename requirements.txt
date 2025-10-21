@@ -1,0 +1,19 @@
+# === Core AI + RAG Framework ===
+langchain==0.3.14
+langchain-community==0.3.14
+langchain-ollama==0.2.1
+chromadb==0.5.23
+ollama==0.3.1
+openai==1.51.2
+tiktoken==0.8.0
+
+# === Web UI ===
+gradio==5.43.1
+
+# === PDF Handling ===
+pypdf==6.0.0
+
+# === Utilities (recommended) ===
+pydantic==2.9.2
+python-dotenv==1.0.1
+requests==2.32.3
