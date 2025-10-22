@@ -1,0 +1,35 @@
+# ============================================================
+# ⚙️ GIT ATTRIBUTES — engine_rag project
+# Purpose: Ensure consistent text formatting & handle binaries
+# ============================================================
+
+* text=auto
+*.py text diff=python
+*.html text
+*.css text
+*.js text
+*.json text
+*.yaml text
+*.yml text
+*.md text
+*.txt text
+*.ini text
+*.cfg text
+*.env text
+*.toml text
+
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.db binary
+*.sqlite binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.pkl binary
+
+.DS_Store binary
+*.bat text eol=crlf
+*.sh text eol=lf
