@@ -1,10 +1,10 @@
 import os
-import urllib.parse  # safe add: for encoding file paths in links
+import urllib.parse
 import gradio as gr
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
-from langchain.chains import RetrievalQA
-from langchain_core.prompts import PromptTemplate
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationalRetrievalChain
 
 # =====================================================
 # 🚫 Disable Telemetry
@@ -18,41 +18,27 @@ os.environ["OLLAMA_HOST"] = "http://127.0.0.1:11434"
 # 🧠 Load Local Chroma RAG Store
 # =====================================================
 persist_dir = "engine_db"
-embeddings = OllamaEmbeddings(model="mxbai-embed-large", base_url="http://127.0.0.1:11434")
+embeddings = OllamaEmbeddings(
+    model="mxbai-embed-large", base_url="http://127.0.0.1:11434"
+)
 db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
 
 # =====================================================
-# 🤖 Local LLM + Retrieval Chain
+# 🧩 Memory + Conversational Chain
 # =====================================================
+memory = ConversationBufferMemory(
+    memory_key="chat_history",
+    return_messages=True,
+    output_key="answer",  # ✅ prevents “multiple output key” error
+)
+
 llm = OllamaLLM(model="llama3", temperature=0)
 retriever = db.as_retriever(search_kwargs={"k": 6})
 
-# =====================================================
-# 🧩 Custom Prompt Template
-# =====================================================
-prompt_template = PromptTemplate(
-    input_variables=["context", "question"],
-    template=(
-        "You are a professional MAN B&W ME-C Engine Assistant.\n\n"
-        "If the user's question does not specify the exact engine model "
-        "(e.g., S50ME-C, S60ME-C8, G70ME-C9), first politely ask which model "
-        "they refer to before giving a detailed answer.\n\n"
-        "Use ONLY the information from the provided context to answer.\n"
-        "If exact values are not listed, summarize the relevant section and "
-        "infer guidance values based on similar MAN B&W ME-C series engines.\n"
-        "Never say 'I don't know' unless the context is completely unrelated.\n"
-        "If the answer includes measurements, present them as clear bullet points "
-        "with units.\n"
-        "At the end, include a short reference list of document names and page numbers.\n\n"
-        "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-    ),
-)
-
-qa_chain = RetrievalQA.from_chain_type(
+qa_chain = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=retriever,
-    chain_type="stuff",
-    chain_type_kwargs={"prompt": prompt_template},
+    memory=memory,
     return_source_documents=True,
 )
 
@@ -61,62 +47,64 @@ qa_chain = RetrievalQA.from_chain_type(
 # =====================================================
 def chat_with_manuals(question, history):
     try:
-        result = qa_chain.invoke({"query": question})
-        answer = result["result"].strip()
+        result = qa_chain.invoke({"question": question})
+        answer = result["answer"].strip()
 
-        # 🔗 Build clean unique list of sources
-        seen = set()
-        sources = []
-        for doc in result.get("source_documents", []):
-            src = os.path.basename(doc.metadata.get("source", "Unknown.pdf"))
-            page = doc.metadata.get("page", "?")
-            key = (src, page)
-            if key not in seen:
-                seen.add(key)
-                abs_path = os.path.abspath(os.path.join("data", src))
-
-                # Keep original file:// link behavior; encode path for safety
-                encoded_abs_path = urllib.parse.quote(abs_path)
-                file_uri = f"file://{encoded_abs_path}#page={page}"
-
-                sources.append((src, page, file_uri))
-
-        # Append sources list
-        if sources:
-            answer += "\n\n📎 **Sources:**"
-            for src, page, _ in sources:
-                answer += f"\n• {src} — page {page}"
+        # Build source markdown string safely
+        sources_md = ""
+        source_docs = result.get("source_documents", [])
+        if source_docs:
+            seen = set()
+            for doc in source_docs:
+                src = os.path.basename(doc.metadata.get("source", "Unknown.pdf"))
+                page = doc.metadata.get("page", "?")
+                key = (src, page)
+                if key not in seen:
+                    seen.add(key)
+                    abs_path = os.path.abspath(os.path.join("data", src))
+                    encoded_abs_path = urllib.parse.quote(abs_path)
+                    file_uri = f"file://{encoded_abs_path}#page={page}"
+                    sources_md += f"• [{src} — page {page}]({file_uri})\n"
+            if sources_md:
+                answer += "\n\n📎 **Sources:**\n" + sources_md
 
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": answer})
-        return history, history, sources, gr.update(value="")
+        return history, history, sources_md, gr.update(value="")
 
     except Exception as e:
         error_msg = f"⚠️ Error: {str(e)}"
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": error_msg})
-        return history, history, [], gr.update(value="")
-
+        return history, history, "", gr.update(value="")
 
 # =====================================================
-# 🧰 Build Gradio Interface
+# 🔁 Reset Function — clears memory and chat
+# =====================================================
+def reset_chat():
+    memory.clear()  # ✅ reset memory buffer
+    return [], [], "", gr.update(value=""), gr.update(visible=False)
+
+# =====================================================
+# 🧰 Gradio Interface
 # =====================================================
 with gr.Blocks(title="ME-C Engine Assistant") as demo:
-    gr.Markdown("## ⚓ ME-C Engine Smart Assistant\nAsk questions about ME-C manuals and service letters — works fully offline using Ollama and your local RAG database.")
+    gr.Markdown(
+        "## ⚓ ME-C Engine Smart Assistant\nAsk questions about ME-C engine manuals and service letters — "
+        "works fully offline using Ollama and your local RAG database."
+    )
 
     chatbot = gr.Chatbot(height=400, type="messages")
     msg = gr.Textbox(placeholder="Ask about ME-C engine, service letters, etc...")
-    clear = gr.Button("Clear Chat")
-    sources_state = gr.State([])
+    clear = gr.Button("🧹 Clear Chat")
+    sources_state = gr.State("")
     sources_box = gr.Markdown(visible=False)
 
-    def show_sources(sources):
-        """Show clickable markdown links to open PDFs in macOS Preview."""
-        if not sources:
+    def show_sources(sources_md):
+        """Show markdown string properly (not a list)."""
+        if not sources_md:
             return gr.update(visible=False)
-        md = "### 📄 **Open Related Manuals in Preview:**\n"
-        for src, page, file_uri in sources:
-            md += f"- [{src} — page {page}]({file_uri})\n"
+        md = f"### 📄 **Open Related Manuals in Preview:**\n{sources_md}"
         return gr.update(value=md, visible=True)
 
     msg.submit(
@@ -130,7 +118,7 @@ with gr.Blocks(title="ME-C Engine Assistant") as demo:
     )
 
     clear.click(
-        lambda: ([], [], [], gr.update(value=""), gr.update(visible=False)),
+        reset_chat,
         None,
         [chatbot, sources_state, sources_box, msg],
         queue=False,
